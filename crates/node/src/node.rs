@@ -35,7 +35,8 @@ use reth_transaction_pool::{
 use reth_trie_db::MerklePatriciaTrie;
 use std::time::Duration;
 use tracing::info;
-
+use reth_node_builder::{components::{ConsensusBuilder, PoolBuilder}, PayloadBuilderConfig};
+use tracing::debug;
 /// Type configuration for a regular Odyssey node.
 #[derive(Debug, Clone, Default)]
 pub struct OdysseyNode {
@@ -54,7 +55,7 @@ impl OdysseyNode {
         args: &RollupArgs,
     ) -> ComponentsBuilder<
         Node,
-        OpPoolBuilder,
+        R55PoolBuilder,
         OdysseyPayloadBuilder,
         OdysseyNetworkBuilder,
         OdysseyExecutorBuilder,
@@ -71,7 +72,7 @@ impl OdysseyNode {
     {
         ComponentsBuilder::default()
             .node_types::<Node>()
-            .pool(OpPoolBuilder {
+            .pool(R55PoolBuilder {
                 pool_config_overrides: PoolBuilderConfigOverrides {
                     queued_limit: Some(SubPoolLimit::default() * 2),
                     pending_limit: Some(SubPoolLimit::default() * 2),
@@ -115,7 +116,7 @@ where
 {
     type ComponentsBuilder = ComponentsBuilder<
         N,
-        OpPoolBuilder,
+        R55PoolBuilder,
         OdysseyPayloadBuilder,
         OdysseyNetworkBuilder,
         OdysseyExecutorBuilder,
@@ -249,5 +250,100 @@ where
         let handle = ctx.start_network_with(network, pool, txconfig);
         info!(target: "reth::cli", enode=%handle.local_node_record(), "P2P networking initialized");
         Ok(handle)
+    }
+}
+
+/// A basic optimism transaction pool.
+///
+/// This contains various settings that can be configured and take precedence over the node's
+/// config.
+#[derive(Debug, Default, Clone)]
+pub struct R55PoolBuilder {
+    /// Enforced overrides that are applied to the pool config.
+    pub pool_config_overrides: PoolBuilderConfigOverrides,
+}
+
+use reth_optimism_node::txpool::OpTransactionPool;
+use reth_transaction_pool::blobstore::DiskFileBlobStore;
+use std::sync::Arc;
+use reth_transaction_pool::TransactionValidationTaskExecutor;
+use reth_optimism_node::txpool::OpTransactionValidator;
+use reth_transaction_pool::CoinbaseTipOrdering;
+use reth_chain_state::CanonStateSubscriptions;
+
+impl<Node> PoolBuilder<Node> for R55PoolBuilder
+where
+    Node: FullNodeTypes<Types: NodeTypes<ChainSpec = OpChainSpec, Primitives = OpPrimitives>>,
+{
+    type Pool = OpTransactionPool<Node::Provider, DiskFileBlobStore>;
+
+    async fn build_pool(self, ctx: &BuilderContext<Node>) -> eyre::Result<Self::Pool> {
+        let Self { pool_config_overrides } = self;
+        let data_dir = ctx.config().datadir();
+        let blob_store = DiskFileBlobStore::open(data_dir.blobstore(), Default::default())?;
+
+        let validator = TransactionValidationTaskExecutor::eth_builder(Arc::new(
+            ctx.chain_spec().inner.clone(),
+        ))
+        .no_eip4844()
+        .with_head_timestamp(ctx.head().timestamp)
+        .kzg_settings(ctx.kzg_settings()?)
+        .with_additional_tasks(
+            pool_config_overrides
+                .additional_validation_tasks
+                .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
+        )
+        .with_max_tx_input_bytes(usize::MAX)
+        .build_with_tasks(ctx.provider().clone(), ctx.task_executor().clone(), blob_store.clone())
+        .map(|validator| {
+            OpTransactionValidator::new(validator)
+                // In --dev mode we can't require gas fees because we're unable to decode
+                // the L1 block info
+                .require_l1_data_gas_fee(!ctx.config().dev.dev)
+        });
+
+        let transaction_pool = reth_transaction_pool::Pool::new(
+            validator,
+            CoinbaseTipOrdering::default(),
+            blob_store,
+            pool_config_overrides.apply(ctx.pool_config()),
+        );
+        info!(target: "reth::cli", "Transaction pool initialized");
+        let transactions_path = data_dir.txpool_transactions();
+
+        // spawn txpool maintenance task
+        {
+            let pool = transaction_pool.clone();
+            let chain_events = ctx.provider().canonical_state_stream();
+            let client = ctx.provider().clone();
+            let transactions_backup_config =
+                reth_transaction_pool::maintain::LocalTransactionBackupConfig::with_local_txs_backup(transactions_path);
+
+            ctx.task_executor().spawn_critical_with_graceful_shutdown_signal(
+                "local transactions backup task",
+                |shutdown| {
+                    reth_transaction_pool::maintain::backup_local_transactions_task(
+                        shutdown,
+                        pool.clone(),
+                        transactions_backup_config,
+                    )
+                },
+            );
+
+            // spawn the maintenance task
+            ctx.task_executor().spawn_critical(
+                "txpool maintenance task",
+                reth_transaction_pool::maintain::maintain_transaction_pool_future(
+                    client,
+                    pool,
+                    chain_events,
+                    ctx.task_executor().clone(),
+                    Default::default(),
+                ),
+            );
+            debug!(target: "reth::cli", "Spawned txpool maintenance task");
+        }
+
+        Ok(transaction_pool)
     }
 }

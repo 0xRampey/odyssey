@@ -26,16 +26,16 @@ use reth_revm::{
     precompile::PrecompileSpecId,
     primitives::{
         AnalysisKind, BlobExcessGasAndPrice, BlockEnv, CfgEnv, Env, HandlerCfg, OptimismFields,
-        SpecId,
+        SpecId,address
     },
-    ContextPrecompiles, Database, Evm, EvmBuilder, GetInspector,
+    ContextPrecompiles, Database, Evm, EvmBuilder, GetInspector,primitives::TransactTo
 };
 use revm_precompile::{
     secp256r1::{p256_verify, P256VERIFY as REVM_P256VERIFY},
     u64_to_address, PrecompileWithAddress,
 };
-use revm_primitives::{CfgEnvWithHandlerCfg, Precompile, TxEnv};
-use std::sync::Arc;
+use revm_primitives::{CfgEnvWithHandlerCfg, Precompile, TxEnv, ExecutionResult, Output};
+use std::{sync::Arc, usize};
 
 /// P256 verify precompile address.
 pub const P256VERIFY_ADDRESS: u64 = 0x14;
@@ -147,6 +147,7 @@ impl ConfigureEvmEnv for OdysseyEvmConfig {
 
         cfg_env.handler_cfg.spec_id = spec_id;
         cfg_env.handler_cfg.is_optimism = true;
+        cfg_env.limit_contract_code_size = Some(usize::MAX);
     }
 
     fn fill_block_env(&self, block_env: &mut BlockEnv, header: &Self::Header, after_merge: bool) {
@@ -175,7 +176,8 @@ impl ConfigureEvmEnv for OdysseyEvmConfig {
         attributes: NextBlockEnvAttributes,
     ) -> Result<EvmEnv, Self::Error> {
         // configure evm env based on parent block
-        let cfg_env = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
+        let mut cfg_env = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
+        cfg_env.limit_contract_code_size = Some(usize::MAX);
 
         // ensure we're not missing any timestamp based hardforks
         let spec_id = revm_spec(&self.chain_spec, parent);
@@ -217,17 +219,23 @@ impl ConfigureEvmEnv for OdysseyEvmConfig {
     }
 }
 
+pub const INITCODE: &[u8] = include_bytes!("./debug_initcode.bin");
 
 impl ConfigureEvm for OdysseyEvmConfig {
     type DefaultExternalContext<'a> = ();
 
     fn evm<DB: Database>(&self, db: DB) -> Evm<'_, Self::DefaultExternalContext<'_>, DB> {
-        EvmBuilder::default()
+        let mut evm = EvmBuilder::default()
             .with_db(db)
             .optimism()
             // add additional precompiles
             .append_handler_register(Self::set_precompiles)
-            .build()
+            .append_handler_register(r55_handle_register::<_, DB>)
+            .modify_cfg_env(|cfg| {
+                cfg.limit_contract_code_size = Some(usize::MAX);
+            })
+            .build();
+        evm
     }
 
     fn evm_with_inspector<DB, I>(&self, db: DB, inspector: I) -> Evm<'_, I, DB>
@@ -243,6 +251,9 @@ impl ConfigureEvm for OdysseyEvmConfig {
             .append_handler_register(Self::set_precompiles)
             .append_handler_register(inspector_handle_register)
             .append_handler_register(r55_handle_register::<I, DB>)
+            .modify_cfg_env(|cfg| {
+                cfg.limit_contract_code_size = Some(usize::MAX);
+            })
             .build()
     }
 
