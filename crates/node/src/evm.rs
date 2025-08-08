@@ -21,7 +21,7 @@ use reth_optimism_forks::OpHardfork;
 use reth_optimism_primitives::OpTransactionSigned;
 use reth_primitives::transaction::FillTxEnv;
 use reth_revm::{
-    handler::register::EvmHandler,
+    handler::{register::EvmHandler},
     inspector_handle_register,
     precompile::PrecompileSpecId,
     primitives::{
@@ -217,6 +217,7 @@ impl ConfigureEvmEnv for OdysseyEvmConfig {
     }
 }
 
+
 impl ConfigureEvm for OdysseyEvmConfig {
     type DefaultExternalContext<'a> = ();
 
@@ -241,10 +242,21 @@ impl ConfigureEvm for OdysseyEvmConfig {
             // add additional precompiles
             .append_handler_register(Self::set_precompiles)
             .append_handler_register(inspector_handle_register)
+            .append_handler_register(r55_handle_register::<I, DB>)
             .build()
     }
 
     fn default_external_context<'a>(&self) -> Self::DefaultExternalContext<'a> {}
+}
+
+// Adapter: reth_revm expects a handler whose context type is `reth_revm::Context<EXT, DB>`.
+// r55 exposes a register function compiled against plain revm. Both are wire-compatible if the
+// `revm` versions match; delegate through this wrapper so the type matches what reth_revm wants.
+fn r55_handle_register<EXT, DB>(h: &mut EvmHandler<'_, EXT, DB>)
+where
+    DB: Database,
+{
+    r55::exec::handle_register(h)
 }
 
 /// Determine the revm spec ID from the current block and reth chainspec.

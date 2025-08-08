@@ -219,6 +219,8 @@ reth-chain-state = { git = "https://github.com/paradigmxyz/reth.git", rev = "bc8
 revm-primitives = { version = "14.0.0" }
 revm-precompile = { version = "15.0.0", features = ["secp256r1"] }
 
+r55 = { git = "https://github.com/0xRampey/r55.git", rev = "f63d61ccac88da38a7b0265fa8f09d96a0928a55" }
+
 # metrics
 metrics = "0.23.0"
 metrics-derive = "0.1.0"

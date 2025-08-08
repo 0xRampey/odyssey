@@ -54,6 +54,7 @@ jsonrpsee.workspace = true
 futures.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
+r55.workspace = true
 
 [lints]
 workspace = true
