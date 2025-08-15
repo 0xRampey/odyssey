@@ -43,6 +43,8 @@ pub const P256VERIFY_ADDRESS: u64 = 0x14;
 /// [RIP-7212](https://github.com/ethereum/RIPs/blob/master/RIPS/rip-7212.md#specification) secp256r1 precompile.
 pub const P256VERIFY: PrecompileWithAddress =
     PrecompileWithAddress(u64_to_address(P256VERIFY_ADDRESS), Precompile::Standard(p256_verify));
+// Set a higher limit for R55 initcode size
+pub const MAX_R55_INITCODE_SIZE: usize = 200_000;
 
 /// Custom EVM configuration
 #[derive(Debug, Clone)]
@@ -147,7 +149,7 @@ impl ConfigureEvmEnv for OdysseyEvmConfig {
 
         cfg_env.handler_cfg.spec_id = spec_id;
         cfg_env.handler_cfg.is_optimism = true;
-        cfg_env.limit_contract_code_size = Some(usize::MAX);
+        cfg_env.limit_contract_code_size = Some(MAX_R55_INITCODE_SIZE);
     }
 
     fn fill_block_env(&self, block_env: &mut BlockEnv, header: &Self::Header, after_merge: bool) {
@@ -177,7 +179,7 @@ impl ConfigureEvmEnv for OdysseyEvmConfig {
     ) -> Result<EvmEnv, Self::Error> {
         // configure evm env based on parent block
         let mut cfg_env = CfgEnv::default().with_chain_id(self.chain_spec.chain().id());
-        cfg_env.limit_contract_code_size = Some(usize::MAX);
+        cfg_env.limit_contract_code_size = Some(MAX_R55_INITCODE_SIZE);
 
         // ensure we're not missing any timestamp based hardforks
         let spec_id = revm_spec(&self.chain_spec, parent);
@@ -219,7 +221,7 @@ impl ConfigureEvmEnv for OdysseyEvmConfig {
     }
 }
 
-pub const INITCODE: &[u8] = include_bytes!("./debug_initcode.bin");
+// pub const INITCODE: &[u8] = include_bytes!("./debug_initcode.bin");
 
 impl ConfigureEvm for OdysseyEvmConfig {
     type DefaultExternalContext<'a> = ();
@@ -232,7 +234,7 @@ impl ConfigureEvm for OdysseyEvmConfig {
             .append_handler_register(Self::set_precompiles)
             .append_handler_register(r55_handle_register::<_, DB>)
             .modify_cfg_env(|cfg| {
-                cfg.limit_contract_code_size = Some(usize::MAX);
+                cfg.limit_contract_code_size = Some(MAX_R55_INITCODE_SIZE);
             })
             .build();
         evm
@@ -252,7 +254,7 @@ impl ConfigureEvm for OdysseyEvmConfig {
             .append_handler_register(inspector_handle_register)
             .append_handler_register(r55_handle_register::<I, DB>)
             .modify_cfg_env(|cfg| {
-                cfg.limit_contract_code_size = Some(usize::MAX);
+                cfg.limit_contract_code_size = Some(MAX_R55_INITCODE_SIZE);
             })
             .build()
     }
