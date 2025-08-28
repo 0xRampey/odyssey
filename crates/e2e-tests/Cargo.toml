@@ -18,7 +18,10 @@ reth-trie-common.workspace = true
 alloy.workspace = true
 alloy-network.workspace = true
 alloy-rpc-types.workspace = true
+alloy-rpc-types-eth.workspace = true
 alloy-signer-local.workspace = true
+r55.workspace = true
+revm-primitives.workspace = true
 
 tokio.workspace = true
 url = "2.5.0"

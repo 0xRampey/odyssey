@@ -267,9 +267,15 @@ use reth_optimism_node::txpool::OpTransactionPool;
 use reth_transaction_pool::blobstore::DiskFileBlobStore;
 use std::sync::Arc;
 use reth_transaction_pool::TransactionValidationTaskExecutor;
-use reth_optimism_node::txpool::OpTransactionValidator;
+use reth_optimism_node::txpool::{OpTransactionValidator, OpL1BlockInfo};
 use reth_transaction_pool::CoinbaseTipOrdering;
 use reth_chain_state::CanonStateSubscriptions;
+use reth_chainspec::ChainSpec;
+use reth_optimism_primitives::{OpBlock, OpTransactionSigned};
+use reth_provider::{BlockReaderIdExt, StateProviderFactory};
+use reth_primitives::{GotExpected, InvalidTransactionError, SealedBlock};
+use reth_primitives_traits::{BlockBody, BlockHeader, Transaction};
+use std::sync::atomic::Ordering;
 
 impl<Node> PoolBuilder<Node> for R55PoolBuilder
 where
@@ -294,6 +300,7 @@ where
                 .unwrap_or_else(|| ctx.config().txpool.additional_validation_tasks),
         )
         .with_max_tx_input_bytes(usize::MAX)
+        .no_shanghai()
         .build_with_tasks(ctx.provider().clone(), ctx.task_executor().clone(), blob_store.clone())
         .map(|validator| {
             OpTransactionValidator::new(validator)
